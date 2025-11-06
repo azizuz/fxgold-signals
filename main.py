@@ -1,32 +1,42 @@
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import yfinance as yf
 import pandas as pd
-import time, os
+import time, os, re
 
 app = FastAPI(title="Gold & Forex Signal Backend")
 
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-origins = [
-    "https://app.base44.com",        # Base44 main app
-    "https://base44.com",            # Base44 API domain
-    "https://fxgold-signals.onrender.com",  # your backend itself
-    "https://aurum-iq-1fc1317b.base44.app",  # your Base44 app URL
-    "https://ta-01k9d3yyx5amax4pbtdzrwfyah-5173.wo-s7v9vxkj063adtka460gnwvfl.w.modal.host"  # temporary Base44 preview URL
-]
+# --- Smart CORS: allows Base44, Render, and any .modal.host previews ---
+class SmartCORSMiddleware(CORSMiddleware):
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            origin = None
+            for name, value in scope["headers"]:
+                if name == b"origin":
+                    origin = value.decode()
+                    break
+            # allow any modal.host domain dynamically
+            if origin and (
+                "base44.com" in origin
+                or "render.com" in origin
+                or re.search(r"\.modal\.host$", origin)
+            ):
+                self.allow_origins = [origin]
+        return await super().__call__(scope, receive, send)
 
-# Temporarily allow all origins (for Base44 development and testing)
 app.add_middleware(
-    CORSMiddleware,
+    SmartCORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
+# --- Simple in-memory cache to prevent rate-limit from Yahoo Finance ---
+_cache = {"signals": None, "timestamp": None}
 
 def compute_signal(df):
     df["SMA20"] = df["Close"].rolling(20).mean()
@@ -39,16 +49,26 @@ def compute_signal(df):
     else:
         return "HOLD", 0.55
 
+
 @app.get("/api/v1/signals")
 def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
-    key = x_api_key or api_key
+    key = (x_api_key or api_key or "").strip()
+    print(f"Received key for /signals: {key}")
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
+
+    # --- Cache check: refresh every 5 minutes ---
+    now = datetime.now(timezone.utc)
+    if _cache["signals"] and _cache["timestamp"]:
+        if now - _cache["timestamp"] < timedelta(minutes=5):
+            return _cache["signals"]
 
     pairs = {"XAUUSD=X": "Gold", "EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD"}
     output = []
     for ticker, name in pairs.items():
         df = yf.download(ticker, period="30d", interval="1h", progress=False)
+        if df.empty:
+            continue
         sig, conf = compute_signal(df)
         price = float(df["Close"].iloc[-1])
         output.append({
@@ -59,11 +79,16 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
             "price": round(price, 4),
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
+
+    _cache["signals"] = output
+    _cache["timestamp"] = now
     return output
+
 
 @app.get("/api/v1/metrics")
 def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
-    key = x_api_key or api_key
+    key = (x_api_key or api_key or "").strip()
+    print(f"Received key for /metrics: {key}")
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -74,6 +99,7 @@ def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
         "avg_confidence": 0.67,
         "last_update": datetime.now(timezone.utc).isoformat()
     }
+
 
 @app.get("/api/v1/health")
 def health():
