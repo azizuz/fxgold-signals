@@ -72,16 +72,9 @@ def get_metrics(x_api_key: str = Header(None)):
 
 @app.get("/api/v1/health")
 def health():
-    start = time.time()
-   @app.get("/api/v1/health")
-def health():
     latency = round(time.time() % 1000, 2)
     return {
         "status": "ok",
         "latency_ms": latency,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-
-    latency = round((time.time() - start) * 1000, 2)
-    return {"status": "ok", "latency_ms": latency,
-            "timestamp": datetime.now(timezone.utc).isoformat()}
