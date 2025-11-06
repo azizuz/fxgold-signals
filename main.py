@@ -12,10 +12,16 @@ API_KEY = os.getenv("API_KEY", "fxgold123")
 from fastapi.middleware.cors import CORSMiddleware
 import re
 
-# --- Simplified FastAPI CORS setup ---
+# --- Final robust CORS setup ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://.*(\.modal\.host|base44\.com|aurumiq\.online)$",
+    allow_origins=[
+        "https://aurumiq.online",
+        "https://app.base44.com",
+        "https://base44.com",
+        "https://fxgold-signals.onrender.com",
+    ],
+    allow_origin_regex=r"^https:\/\/.*(\.modal\.host)$",  # allow Base44 previews
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
