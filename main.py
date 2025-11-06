@@ -12,36 +12,14 @@ API_KEY = os.getenv("API_KEY", "fxgold123")
 from fastapi.middleware.cors import CORSMiddleware
 import re
 
-# --- Universal CORS middleware (final version) ---
 from fastapi.middleware.cors import CORSMiddleware
-import re
 
-# This function dynamically checks the origin
-def allow_origin(origin: str):
-    if not origin:
-        return False
-    return any([
-        "base44.com" in origin,
-        "aurumiq.online" in origin,
-        "fxgold-signals.onrender.com" in origin,
-        re.search(r"\.modal\.host$", origin),
-    ])
-
-class DynamicCORSMiddleware(CORSMiddleware):
-    async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            origin = None
-            for name, value in scope["headers"]:
-                if name == b"origin":
-                    origin = value.decode()
-                    break
-            if origin and allow_origin(origin):
-                self.allow_origins = [origin]
-        return await super().__call__(scope, receive, send)
-
+# --- Ultra-compatible CORS setup (for testing) ---
+# This version allows absolutely every origin, including Base44 previews.
+# We'll tighten it after confirming it works.
 app.add_middleware(
-    DynamicCORSMiddleware,
-    allow_origins=["*"],  # base default (overridden dynamically)
+    CORSMiddleware,
+    allow_origins=["*"],  # allow everything (testing)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
