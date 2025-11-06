@@ -39,8 +39,9 @@ def compute_signal(df):
         return "HOLD", 0.55
 
 @app.get("/api/v1/signals")
-def get_signals(x_api_key: str = Header(None)):
-    if x_api_key != API_KEY:
+def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
+    key = x_api_key or api_key
+    if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     pairs = {"XAUUSD=X": "Gold", "EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD"}
@@ -60,8 +61,9 @@ def get_signals(x_api_key: str = Header(None)):
     return output
 
 @app.get("/api/v1/metrics")
-def get_metrics(x_api_key: str = Header(None)):
-    if x_api_key != API_KEY:
+def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
+    key = x_api_key or api_key
+    if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     return {
