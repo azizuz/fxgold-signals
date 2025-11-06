@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from datetime import datetime, timezone, timedelta
 import yfinance as yf
 import pandas as pd
@@ -7,19 +7,32 @@ import time, os
 
 app = FastAPI(title="Gold & Forex Signal Backend")
 
-# ✅ Your API Key (same as in Render and Base44)
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-# ✅ Ultra-compatible CORS setup (allows all origins — testing mode)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # allow absolutely every origin
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# --- Manual CORS handler (works even if middleware fails) ---
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    response = await call_next(request)
+    origin = request.headers.get("origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, x-api-key, api_key"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
-# ✅ Simple cache (to avoid Yahoo rate limits)
+# --- Handle OPTIONS requests directly (CORS preflight) ---
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str = ""):
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, api_key",
+        "Access-Control-Allow-Credentials": "true"
+    }
+    return JSONResponse(content={"ok": True}, headers=headers)
+
+# --- Cache to avoid Yahoo rate limit ---
 _cache = {"signals": None, "timestamp": None}
 
 
