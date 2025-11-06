@@ -13,7 +13,8 @@ origins = [
     "https://app.base44.com",        # Base44 main app
     "https://base44.com",            # Base44 API domain
     "https://fxgold-signals.onrender.com",  # your backend itself
-    "https://aurum-iq-1fc1317b.base44.app"  # replace with YOUR Base44 app URL
+    "https://aurum-iq-1fc1317b.base44.app",  # your Base44 app URL
+    "https://ta-01k9d3yyx5amax4pbtdzrwfyah-5173.wo-s7v9vxkj063adtka460gnwvfl.w.modal.host"  # temporary Base44 preview URL
 ]
 
 app.add_middleware(
@@ -23,6 +24,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 def compute_signal(df):
