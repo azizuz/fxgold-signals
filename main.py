@@ -20,10 +20,13 @@ class SmartCORSMiddleware(CORSMiddleware):
                     break
             # allow any modal.host domain dynamically
             if origin and (
-                "base44.com" in origin
-                or "render.com" in origin
-                or re.search(r"\.modal\.host$", origin)
-            ):
+    "base44.com" in origin
+    or "render.com" in origin
+    or "aurumiq.online" in origin  # ✅ allow your custom domain
+    or re.search(r"\.modal\.host$", origin)
+):
+    self.allow_origins = [origin]
+
                 self.allow_origins = [origin]
         return await super().__call__(scope, receive, send)
 
