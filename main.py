@@ -3,30 +3,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 import yfinance as yf
 import pandas as pd
-import time, os, re
+import time, os
 
 app = FastAPI(title="Gold & Forex Signal Backend")
 
+# ✅ Your API Key (same as in Render and Base44)
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-from fastapi.middleware.cors import CORSMiddleware
-import re
-
-from fastapi.middleware.cors import CORSMiddleware
-
-# --- Ultra-compatible CORS setup (for testing) ---
-# This version allows absolutely every origin, including Base44 previews.
-# We'll tighten it after confirming it works.
+# ✅ Ultra-compatible CORS setup (allows all origins — testing mode)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # allow everything (testing)
+    allow_origins=["*"],  # allow absolutely every origin
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Cache to avoid Yahoo rate limit ---
+# ✅ Simple cache (to avoid Yahoo rate limits)
 _cache = {"signals": None, "timestamp": None}
+
 
 def compute_signal(df):
     df["SMA20"] = df["Close"].rolling(20).mean()
@@ -43,7 +38,6 @@ def compute_signal(df):
 @app.get("/api/v1/signals")
 def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
-    print(f"DEBUG /signals – received header key: {key!r}")
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -77,7 +71,6 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
 @app.get("/api/v1/metrics")
 def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
-    print(f"DEBUG /metrics – received header key: {key!r}")
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
