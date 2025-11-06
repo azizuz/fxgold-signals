@@ -73,7 +73,15 @@ def get_metrics(x_api_key: str = Header(None)):
 @app.get("/api/v1/health")
 def health():
     start = time.time()
-    _ = yf.download("XAUUSD=X", period="1d", interval="1h", progress=False)
+   @app.get("/api/v1/health")
+def health():
+    latency = round(time.time() % 1000, 2)
+    return {
+        "status": "ok",
+        "latency_ms": latency,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
     latency = round((time.time() - start) * 1000, 2)
     return {"status": "ok", "latency_ms": latency,
             "timestamp": datetime.now(timezone.utc).isoformat()}
