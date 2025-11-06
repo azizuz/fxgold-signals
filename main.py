@@ -9,13 +9,21 @@ app = FastAPI(title="Gold & Forex Signal Backend")
 
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-origins = ["*"]
+origins = [
+    "https://app.base44.com",        # Base44 main app
+    "https://base44.com",            # Base44 API domain
+    "https://fxgold-signals.onrender.com",  # your backend itself
+    "https://aurum-iq-1fc1317b.base44.app"  # replace with YOUR Base44 app URL
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 def compute_signal(df):
     df["SMA20"] = df["Close"].rolling(20).mean()
