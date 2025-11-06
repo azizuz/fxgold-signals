@@ -53,9 +53,10 @@ def compute_signal(df):
 @app.get("/api/v1/signals")
 def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
-    print(f"Received key for /signals: {key}")
+    print(f"DEBUG /signals – received header key: {key!r}")
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
+    ...
 
     # --- Cache check: refresh every 5 minutes ---
     now = datetime.now(timezone.utc)
@@ -88,9 +89,10 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
 @app.get("/api/v1/metrics")
 def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
-    print(f"Received key for /metrics: {key}")
+    print(f"DEBUG /metrics – received header key: {key!r}")
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
+    ...
 
     return {
         "win_rate": 0.74,
