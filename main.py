@@ -17,9 +17,10 @@ origins = [
     "https://ta-01k9d3yyx5amax4pbtdzrwfyah-5173.wo-s7v9vxkj063adtka460gnwvfl.w.modal.host"  # temporary Base44 preview URL
 ]
 
+# Temporarily allow all origins (for Base44 development and testing)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
