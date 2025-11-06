@@ -9,7 +9,10 @@ app = FastAPI(title="Gold & Forex Signal Backend")
 
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-# --- Smart CORS Middleware ---
+from fastapi.middleware.cors import CORSMiddleware
+import re
+
+# --- Smart CORS middleware ---
 class SmartCORSMiddleware(CORSMiddleware):
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
@@ -18,22 +21,21 @@ class SmartCORSMiddleware(CORSMiddleware):
                 if name == b"origin":
                     origin = value.decode()
                     break
-
-            # ✅ Allow Base44, Render, your domain, and modal.host previews
+            # Dynamically allow trusted origins
             if origin and (
                 "base44.com" in origin
                 or "render.com" in origin
-                or "aurumiq.online" in origin
+                or "aurumiq.online" in origin   # your domain
                 or re.search(r"\.modal\.host$", origin)
             ):
                 self.allow_origins = [origin]
-
         return await super().__call__(scope, receive, send)
 
 
+# Apply middleware globally
 app.add_middleware(
     SmartCORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # base default (overridden dynamically)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
