@@ -12,30 +12,10 @@ API_KEY = os.getenv("API_KEY", "fxgold123")
 from fastapi.middleware.cors import CORSMiddleware
 import re
 
-# --- Smart CORS middleware ---
-class SmartCORSMiddleware(CORSMiddleware):
-    async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            origin = None
-            for name, value in scope["headers"]:
-                if name == b"origin":
-                    origin = value.decode()
-                    break
-            # Dynamically allow trusted origins
-            if origin and (
-                "base44.com" in origin
-                or "render.com" in origin
-                or "aurumiq.online" in origin   # your domain
-                or re.search(r"\.modal\.host$", origin)
-            ):
-                self.allow_origins = [origin]
-        return await super().__call__(scope, receive, send)
-
-
-# Apply middleware globally
+# --- Simplified FastAPI CORS setup ---
 app.add_middleware(
-    SmartCORSMiddleware,
-    allow_origins=["*"],  # base default (overridden dynamically)
+    CORSMiddleware,
+    allow_origin_regex=r"https://.*(\.modal\.host|base44\.com|aurumiq\.online)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
