@@ -12,18 +12,36 @@ API_KEY = os.getenv("API_KEY", "fxgold123")
 from fastapi.middleware.cors import CORSMiddleware
 import re
 
-# --- Final CORS configuration (matches ALL Base44 preview URLs) ---
+# --- Universal CORS middleware (final version) ---
+from fastapi.middleware.cors import CORSMiddleware
+import re
+
+# This function dynamically checks the origin
+def allow_origin(origin: str):
+    if not origin:
+        return False
+    return any([
+        "base44.com" in origin,
+        "aurumiq.online" in origin,
+        "fxgold-signals.onrender.com" in origin,
+        re.search(r"\.modal\.host$", origin),
+    ])
+
+class DynamicCORSMiddleware(CORSMiddleware):
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            origin = None
+            for name, value in scope["headers"]:
+                if name == b"origin":
+                    origin = value.decode()
+                    break
+            if origin and allow_origin(origin):
+                self.allow_origins = [origin]
+        return await super().__call__(scope, receive, send)
+
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://aurumiq.online",
-        "https://app.base44.com",
-        "https://base44.com",
-        "https://fxgold-signals.onrender.com",
-    ],
-    # ✅ This regex matches all Base44 preview URLs, like:
-    # https://ta-01abc123xyz-5173.wo-xyz.modal.host
-    allow_origin_regex=r"^https:\/\/.*\.modal\.host$",
+    DynamicCORSMiddleware,
+    allow_origins=["*"],  # base default (overridden dynamically)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
