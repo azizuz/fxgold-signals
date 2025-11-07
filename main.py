@@ -5,13 +5,12 @@ import yfinance as yf
 import pandas as pd
 import time, os, re
 
-
 app = FastAPI(title="Gold & Forex Signal Backend")
 
-# ✅ Your API Key (from Render secrets or fallback)
+# ✅ API key (from Render secrets or fallback)
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-# ✅ Trusted origins (we’ll manually allow them)
+# ✅ Trusted origins
 ALLOWED_ORIGINS = [
     "https://app.base44.com",
     "https://base44.com",
@@ -19,18 +18,18 @@ ALLOWED_ORIGINS = [
     "https://fxgold-signals.onrender.com",
 ]
 
-# ✅ Add dynamic origin matching for modal.host previews
+# ✅ Allow dynamic Base44 preview URLs
 def is_allowed_origin(origin: str):
     if not origin:
         return False
     if origin in ALLOWED_ORIGINS:
         return True
-    if re.search(r"\.modal\.host$", origin):  # Base44 preview
+    if re.search(r"\.modal\.host$", origin):
         return True
     return False
 
 
-# ✅ Manual CORS middleware that always sets headers
+# ✅ Custom CORS middleware
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
@@ -39,9 +38,7 @@ async def cors_middleware(request: Request, call_next):
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
     else:
-        # Fallback — allow all during debugging
         response.headers["Access-Control-Allow-Origin"] = "*"
-
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, x-api-key, api_key"
     response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -61,7 +58,7 @@ async def preflight_handler(request: Request):
     return JSONResponse(content={"ok": True}, headers=headers)
 
 
-# --- Simple cache to avoid Yahoo Finance rate limits ---
+# --- Cache to avoid Yahoo rate limit ---
 _cache = {"signals": None, "timestamp": None}
 
 def compute_signal(df):
@@ -89,9 +86,14 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
         if now - _cache["timestamp"] < timedelta(minutes=5):
             return _cache["signals"]
 
-    pairs = {"XAUUSD=X": "Gold", "EURUSD=X", "GBPUSD=X": "GBP/USD"}
-    output = []
+    # ✅ Corrected dictionary
+    pairs = {
+        "XAUUSD=X": "Gold",
+        "EURUSD=X": "EUR/USD",
+        "GBPUSD=X": "GBP/USD"
+    }
 
+    output = []
     for ticker, name in pairs.items():
         df = yf.download(ticker, period="30d", interval="1h", progress=False)
         if df.empty:
