@@ -59,7 +59,43 @@ async def preflight_handler(request: Request):
 
 
 # --- Cache to avoid Yahoo rate limit ---
+import asyncio
+
 _cache = {"signals": None, "timestamp": None}
+
+async def update_signals_cache():
+    """Background task that refreshes signals every 10 minutes."""
+    while True:
+        print("🔄 Refreshing signal cache in background...")
+        try:
+            pairs = {
+                "XAUUSD=X": "Gold",
+                "EURUSD=X": "EUR/USD",
+                "GBPUSD=X": "GBP/USD"
+            }
+            output = []
+            for ticker, name in pairs.items():
+                df = yf.download(ticker, period="30d", interval="1h", progress=False)
+                if df.empty:
+                    continue
+                sig, conf = compute_signal(df)
+                price = float(df["Close"].iloc[-1])
+                output.append({
+                    "symbol": ticker,
+                    "name": name,
+                    "signal": sig,
+                    "confidence": conf,
+                    "price": round(price, 4),
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
+
+            _cache["signals"] = output
+            _cache["timestamp"] = datetime.now(timezone.utc)
+            print("✅ Signal cache updated successfully.")
+        except Exception as e:
+            print(f"⚠️ Error updating signal cache: {e}")
+
+        await asyncio.sleep(600)  # 10 minutes
 
 def compute_signal(df):
     df["SMA20"] = df["Close"].rolling(20).mean()
@@ -144,3 +180,6 @@ def health():
         "latency_ms": round(time.time() % 1000, 2),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(update_signals_cache())
