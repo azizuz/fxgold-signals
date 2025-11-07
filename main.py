@@ -41,9 +41,9 @@ def get_gold_price():
         print("⚠️ Gold price fetch error:", e)
         return None
 
-# --- Fetch Live Forex Prices ---
+# --- Fetch Live Forex Prices (and fix inversions) ---
 def get_forex_rates():
-    url = f"https://{FOREX_HOST}/live-rates?base_currency_code=USD&currency_codes=GBP,USD,EUR,JPY"
+    url = f"https://{FOREX_HOST}/live-rates?base_currency_code=USD&currency_codes=GBP,EUR,JPY"
     headers = {
         "x-rapidapi-key": RAPID_KEY,
         "x-rapidapi-host": FOREX_HOST
@@ -52,11 +52,17 @@ def get_forex_rates():
         res = requests.get(url, headers=headers, timeout=10)
         res.raise_for_status()
         data = res.json()
+
+        # Forex.APISED returns base=USD, so EUR=0.94 → EUR/USD = 1/0.94
         rates = data.get("rates", {})
+        eurusd = 1 / rates.get("EUR", 1.0)
+        gbpusd = 1 / rates.get("GBP", 1.0)
+        usdjpy = rates.get("JPY", 150.0)
+
         return {
-            "EURUSD": 1 / rates.get("EUR", 1.0),
-            "GBPUSD": 1 / rates.get("GBP", 1.0),
-            "USDJPY": rates.get("JPY", 150.0)
+            "EURUSD": round(eurusd, 5),
+            "GBPUSD": round(gbpusd, 5),
+            "USDJPY": round(usdjpy, 2)
         }
     except Exception as e:
         print("⚠️ Forex fetch error:", e)
@@ -83,7 +89,7 @@ async def update_cache():
                     {
                         "symbol": "EURUSD",
                         "name": "EUR/USD",
-                        "price": round(forex["EURUSD"], 5),
+                        "price": forex["EURUSD"],
                         "signal": "BUY" if forex["EURUSD"] > 1.0 else "SELL",
                         "confidence": 0.70,
                         "timestamp": datetime.now(timezone.utc).isoformat()
@@ -91,7 +97,7 @@ async def update_cache():
                     {
                         "symbol": "GBPUSD",
                         "name": "GBP/USD",
-                        "price": round(forex["GBPUSD"], 5),
+                        "price": forex["GBPUSD"],
                         "signal": "BUY" if forex["GBPUSD"] > 1.0 else "SELL",
                         "confidence": 0.72,
                         "timestamp": datetime.now(timezone.utc).isoformat()
@@ -99,7 +105,7 @@ async def update_cache():
                     {
                         "symbol": "USDJPY",
                         "name": "USD/JPY",
-                        "price": round(forex["USDJPY"], 2),
+                        "price": forex["USDJPY"],
                         "signal": "SELL" if forex["USDJPY"] > 140 else "BUY",
                         "confidence": 0.68,
                         "timestamp": datetime.now(timezone.utc).isoformat()
