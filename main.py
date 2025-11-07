@@ -7,11 +7,10 @@ import time, os, re, asyncio
 
 app = FastAPI(title="Gold & Forex Signal Backend")
 
-# --- Security key ---
+# --- API Key ---
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-# --- Production-safe CORS setup ---
-# Allows your real domain, Base44, and modal previews (for testing)
+# --- CORS: allows aurumiq.online, Base44, Render, and modal.host ---
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://(.*\.)?(aurumiq\.online|base44\.com|modal\.host)$",
@@ -20,40 +19,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Caching store ---
+# --- Cache for signals ---
 _cache = {"signals": None, "timestamp": None}
 
-# --- Compute trading signal safely ---
+
+# --- Signal logic (shorter averages for faster response) ---
 def compute_signal(df):
-    df["SMA20"] = df["Close"].rolling(20).mean()
-    df["SMA50"] = df["Close"].rolling(50).mean()
-
+    df["SMA10"] = df["Close"].rolling(10).mean()
+    df["SMA30"] = df["Close"].rolling(30).mean()
     last = df.iloc[-1]
-    sma20 = float(last["SMA20"])
-    sma50 = float(last["SMA50"])
-
-    if sma20 > sma50:
+    if last["SMA10"] > last["SMA30"]:
         return "BUY", 0.75
-    elif sma20 < sma50:
+    elif last["SMA10"] < last["SMA30"]:
         return "SELL", 0.70
     else:
         return "HOLD", 0.55
 
 
-# --- Background task to update signals every 10 minutes (non-blocking) ---
+# --- Background cache updater ---
 async def update_signals_cache():
-    await asyncio.sleep(3)  # wait 3s after boot to ensure startup completes
+    await asyncio.sleep(3)
     while True:
         try:
-            print("🔄 Refreshing cached signals...")
+            print("🔄 Refreshing cached signals (background)...")
             pairs = {
                 "XAUUSD=X": "Gold",
                 "EURUSD=X": "EUR/USD",
                 "GBPUSD=X": "GBP/USD",
+                "USDJPY=X": "USD/JPY",
             }
             output = []
             for ticker, name in pairs.items():
-                df = yf.download(ticker, period="30d", interval="1h", progress=False)
+                df = yf.download(ticker, period="1d", interval="5m", progress=False)
                 if df.empty:
                     continue
                 sig, conf = compute_signal(df)
@@ -63,21 +60,51 @@ async def update_signals_cache():
                     "name": name,
                     "signal": sig,
                     "confidence": conf,
-                    "price": round(price, 4),
+                    "price": round(price, 5 if "JPY" in ticker else 4),
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 })
+
             _cache["signals"] = output
             _cache["timestamp"] = datetime.now(timezone.utc)
-            print("✅ Cached signals updated.")
+            print("✅ Cached live prices updated.")
         except Exception as e:
             print(f"⚠️ Error updating signals: {e}")
-        await asyncio.sleep(600)  # refresh every 10 minutes
+
+        await asyncio.sleep(600)  # every 10 minutes
 
 
 @app.on_event("startup")
 async def startup_event():
-    loop = asyncio.get_event_loop()
-    loop.create_task(update_signals_cache())
+    asyncio.create_task(update_signals_cache())
+
+
+# --- Force refresh function ---
+def fetch_signals_now():
+    print("⚡ Instant refresh triggered via /signals")
+    pairs = {
+        "XAUUSD=X": "Gold",
+        "EURUSD=X": "EUR/USD",
+        "GBPUSD=X": "GBP/USD",
+        "USDJPY=X": "USD/JPY",
+    }
+    output = []
+    for ticker, name in pairs.items():
+        df = yf.download(ticker, period="1d", interval="5m", progress=False)
+        if df.empty:
+            continue
+        sig, conf = compute_signal(df)
+        price = float(df["Close"].iloc[-1])
+        output.append({
+            "symbol": ticker,
+            "name": name,
+            "signal": sig,
+            "confidence": conf,
+            "price": round(price, 5 if "JPY" in ticker else 4),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+    _cache["signals"] = output
+    _cache["timestamp"] = datetime.now(timezone.utc)
+    return output
 
 
 # --- /signals endpoint ---
@@ -87,12 +114,12 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    # Serve cached results instantly
-    if _cache["signals"]:
-        return _cache["signals"]
+    # If cache empty or older than 10 minutes → refresh immediately
+    if not _cache["signals"] or not _cache["timestamp"] or \
+       (datetime.now(timezone.utc) - _cache["timestamp"]) > timedelta(minutes=10):
+        return fetch_signals_now()
 
-    # fallback if cache is empty
-    return {"status": "initializing", "message": "Cache still warming up"}
+    return _cache["signals"]
 
 
 # --- /metrics endpoint ---
