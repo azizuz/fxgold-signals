@@ -77,6 +77,9 @@ async def update_signals_cache():
                 output = []
                 for ticker, name in pairs.items():
                     df = yf.download(ticker, period="1d", interval="5m", progress=False)
+                    if df is None or df.empty:
+    print(f"⚠️ No data for {ticker}")
+    continue
                     if df.empty:
                         continue
                     sig, conf = compute_signal(df)
