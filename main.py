@@ -5,6 +5,7 @@ import yfinance as yf
 import pandas as pd
 import time, os, re
 
+
 app = FastAPI(title="Gold & Forex Signal Backend")
 
 # ✅ Your API Key (from Render secrets or fallback)
