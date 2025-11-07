@@ -43,10 +43,17 @@ def markets_open() -> bool:
 def compute_signal(df):
     df["SMA10"] = df["Close"].rolling(10).mean()
     df["SMA30"] = df["Close"].rolling(30).mean()
+    df = df.dropna()
+    if df.empty:
+        return "HOLD", 0.5  # not enough data
+
     last = df.iloc[-1]
-    if last["SMA10"] > last["SMA30"]:
+    sma10 = float(last["SMA10"])
+    sma30 = float(last["SMA30"])
+
+    if sma10 > sma30:
         return "BUY", 0.75
-    elif last["SMA10"] < last["SMA30"]:
+    elif sma10 < sma30:
         return "SELL", 0.70
     else:
         return "HOLD", 0.55
