@@ -64,10 +64,16 @@ _cache = {"signals": None, "timestamp": None}
 def compute_signal(df):
     df["SMA20"] = df["Close"].rolling(20).mean()
     df["SMA50"] = df["Close"].rolling(50).mean()
+
+    # Take the last row safely
     last = df.iloc[-1]
-    if last["SMA20"] > last["SMA50"]:
+
+    sma20 = float(last["SMA20"])
+    sma50 = float(last["SMA50"])
+
+    if sma20 > sma50:
         return "BUY", 0.75
-    elif last["SMA20"] < last["SMA50"]:
+    elif sma20 < sma50:
         return "SELL", 0.70
     else:
         return "HOLD", 0.55
