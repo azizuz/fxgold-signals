@@ -1,5 +1,6 @@
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from datetime import datetime, timezone, timedelta
 import yfinance as yf
 import pandas as pd
@@ -7,32 +8,35 @@ import time, os
 
 app = FastAPI(title="Gold & Forex Signal Backend")
 
-# --- API Key configuration ---
+# ✅ API Key setup
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-# --- CORS Configuration ---
-# Allows your Base44 preview, production, and your own domain
+# ✅ ABSOLUTE CORS PERMISSION (works for Base44, modal.host, etc.)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://app.base44.com",
-        "https://base44.com",
-        "https://aurumiq.online",
-        "https://fxgold-signals.onrender.com",
-        # Allow any Base44 preview URLs dynamically (e.g., .modal.host)
-    ],
-    allow_origin_regex=r"https://.*\.modal\.host$",
+    allow_origins=["*"],  # allow everything
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- In-memory cache to reduce Yahoo API calls ---
+# ✅ FORCE CORS HEADER ON EVERY RESPONSE
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    response = await call_next(request)
+    origin = request.headers.get("origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    return response
+
+
+# --- CACHE ---
 _cache = {"signals": None, "timestamp": None}
 
-
 def compute_signal(df):
-    """Simple moving average strategy for signals."""
     df["SMA20"] = df["Close"].rolling(20).mean()
     df["SMA50"] = df["Close"].rolling(50).mean()
     last = df.iloc[-1]
@@ -56,12 +60,7 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
         if now - _cache["timestamp"] < timedelta(minutes=5):
             return _cache["signals"]
 
-    pairs = {
-        "XAUUSD=X": "Gold",
-        "EURUSD=X": "EUR/USD",
-        "GBPUSD=X": "GBP/USD",
-    }
-
+    pairs = {"XAUUSD=X": "Gold", "EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD"}
     output = []
     for ticker, name in pairs.items():
         df = yf.download(ticker, period="30d", interval="1h", progress=False)
@@ -75,7 +74,7 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
             "signal": sig,
             "confidence": conf,
             "price": round(price, 4),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
     _cache["signals"] = output
@@ -95,7 +94,7 @@ def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
         "sharpe_ratio": 1.88,
         "max_drawdown": 0.09,
         "avg_confidence": 0.67,
-        "last_update": datetime.now(timezone.utc).isoformat(),
+        "last_update": datetime.now(timezone.utc).isoformat()
     }
 
 
@@ -105,5 +104,5 @@ def health():
     return {
         "status": "ok",
         "latency_ms": latency,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
