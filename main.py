@@ -41,7 +41,7 @@ def get_gold_price():
         print("⚠️ Gold price fetch error:", e)
         return None
 
-# --- Fetch Live Forex Prices (and fix inversions) ---
+# --- Fetch Live Forex Prices (fix inversions for USD pairs) ---
 def get_forex_rates():
     url = f"https://{FOREX_HOST}/live-rates?base_currency_code=USD&currency_codes=GBP,EUR,JPY"
     headers = {
@@ -53,7 +53,7 @@ def get_forex_rates():
         res.raise_for_status()
         data = res.json()
 
-        # Forex.APISED returns base=USD, so EUR=0.94 → EUR/USD = 1/0.94
+        # Convert base=USD rates to USD pairs
         rates = data.get("rates", {})
         eurusd = 1 / rates.get("EUR", 1.0)
         gbpusd = 1 / rates.get("GBP", 1.0)
@@ -68,7 +68,7 @@ def get_forex_rates():
         print("⚠️ Forex fetch error:", e)
         return None
 
-# --- Background Cache Update ---
+# --- Background Cache Update (every 2 minutes) ---
 async def update_cache():
     while True:
         try:
@@ -118,7 +118,7 @@ async def update_cache():
         except Exception as e:
             print(f"⚠️ Error updating cache: {e}")
 
-        await asyncio.sleep(600)  # update every 10 minutes
+        await asyncio.sleep(120)  # ⏱️ every 2 minutes
 
 @app.on_event("startup")
 async def startup_event():
