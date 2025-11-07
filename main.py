@@ -3,14 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 import yfinance as yf
 import pandas as pd
-import time, os, re, asyncio
+import time, os, asyncio
 
 app = FastAPI(title="Gold & Forex Signal Backend")
 
-# --- API Key ---
+# --- API KEY ---
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-# --- CORS: allow your domain, Base44, and modal previews ---
+# --- CORS for production ---
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://(.*\.)?(aurumiq\.online|base44\.com|modal\.host)$",
@@ -19,25 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Cache for signals ---
+# --- Cache ---
 _cache = {"signals": None, "timestamp": None}
-
-
-# --- Helper: check if markets are open ---
-def markets_open() -> bool:
-    """Check if it's a weekday and within active forex hours."""
-    now = datetime.utcnow()
-    # Forex open: Sunday 22:00 UTC → Friday 22:00 UTC
-    weekday = now.weekday()  # 0=Mon, 6=Sun
-    hour = now.hour
-    if weekday == 6 and hour < 22:
-        return False  # before Sunday 22:00 UTC
-    if weekday == 4 and hour >= 22:
-        return False  # after Friday 22:00 UTC
-    if weekday == 5:
-        return False  # Saturday closed
-    return True
-
 
 # --- Compute trading signal ---
 def compute_signal(df):
@@ -45,7 +28,7 @@ def compute_signal(df):
     df["SMA30"] = df["Close"].rolling(30).mean()
     df = df.dropna()
     if df.empty:
-        return "HOLD", 0.5  # not enough data
+        return "HOLD", 0.5
 
     last = df.iloc[-1]
     sma10 = float(last["SMA10"])
@@ -59,46 +42,38 @@ def compute_signal(df):
         return "HOLD", 0.55
 
 
-
-# --- Background cache updater ---
+# --- Fetch fresh signals (background) ---
 async def update_signals_cache():
-    await asyncio.sleep(3)
     while True:
         try:
-            if not markets_open():
-                print("🕒 Markets closed — skipping update.")
-            else:
-                print("🔄 Refreshing cached signals (background)...")
-                pairs = {
-                    "XAUUSD=X": "Gold",
-                    "EURUSD=X": "EUR/USD",
-                    "GBPUSD=X": "GBP/USD",
-                    "USDJPY=X": "USD/JPY",
-                }
-                output = []
-                for ticker, name in pairs.items():
-    df = yf.download(ticker, period="1d", interval="5m", progress=False)
-    
-    # Skip if no data returned
-    if df is None or df.empty:
-        print(f"⚠️ No data for {ticker}")
-        continue
+            print("🔄 Refreshing cached signals...")
+            pairs = {
+                "XAUUSD=X": "Gold",
+                "EURUSD=X": "EUR/USD",
+                "GBPUSD=X": "GBP/USD",
+            }
+            output = []
+            for ticker, name in pairs.items():
+                df = yf.download(ticker, period="1d", interval="5m", progress=False)
 
-    sig, conf = compute_signal(df)
-    price = float(df["Close"].iloc[-1])
-    output.append({
-        "symbol": ticker,
-        "name": name,
-        "signal": sig,
-        "confidence": conf,
-        "price": round(price, 4),
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    })
+                if df is None or df.empty:
+                    print(f"⚠️ No data for {ticker}")
+                    continue
 
+                sig, conf = compute_signal(df)
+                price = float(df["Close"].iloc[-1])
+                output.append({
+                    "symbol": ticker,
+                    "name": name,
+                    "signal": sig,
+                    "confidence": conf,
+                    "price": round(price, 4),
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
 
-                _cache["signals"] = output
-                _cache["timestamp"] = datetime.now(timezone.utc)
-                print("✅ Cached live prices updated.")
+            _cache["signals"] = output
+            _cache["timestamp"] = datetime.now(timezone.utc)
+            print("✅ Cached signals updated.")
         except Exception as e:
             print(f"⚠️ Error updating signals: {e}")
 
@@ -110,38 +85,6 @@ async def startup_event():
     asyncio.create_task(update_signals_cache())
 
 
-# --- Manual refresh function ---
-def fetch_signals_now():
-    print("⚡ Manual refresh triggered via /signals")
-    if not markets_open():
-        return {"status": "market_closed", "message": "Markets are currently closed"}
-
-    pairs = {
-        "XAUUSD=X": "Gold",
-        "EURUSD=X": "EUR/USD",
-        "GBPUSD=X": "GBP/USD",
-        "USDJPY=X": "USD/JPY",
-    }
-    output = []
-    for ticker, name in pairs.items():
-        df = yf.download(ticker, period="1d", interval="5m", progress=False)
-        if df.empty:
-            continue
-        sig, conf = compute_signal(df)
-        price = float(df["Close"].iloc[-1])
-        output.append({
-            "symbol": ticker,
-            "name": name,
-            "signal": sig,
-            "confidence": conf,
-            "price": round(price, 5 if "JPY" in ticker else 4),
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
-    _cache["signals"] = output
-    _cache["timestamp"] = datetime.now(timezone.utc)
-    return output
-
-
 # --- /signals endpoint ---
 @app.get("/api/v1/signals")
 def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
@@ -149,15 +92,10 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    if not markets_open():
-        return {"status": "market_closed", "message": "Markets are currently closed"}
+    if _cache["signals"]:
+        return _cache["signals"]
 
-    # If cache is missing or older than 10 minutes → refresh instantly
-    if not _cache["signals"] or not _cache["timestamp"] or \
-       (datetime.now(timezone.utc) - _cache["timestamp"]) > timedelta(minutes=10):
-        return fetch_signals_now()
-
-    return _cache["signals"]
+    return {"status": "initializing", "message": "Cache warming up, try again soon."}
 
 
 # --- /metrics endpoint ---
