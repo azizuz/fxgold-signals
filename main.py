@@ -40,8 +40,9 @@ def compute_signal(df):
         return "HOLD", 0.55
 
 
-# --- Background task to update signals every 10 minutes ---
+# --- Background task to update signals every 10 minutes (non-blocking) ---
 async def update_signals_cache():
+    await asyncio.sleep(3)  # wait 3s after boot to ensure startup completes
     while True:
         try:
             print("🔄 Refreshing cached signals...")
@@ -70,13 +71,13 @@ async def update_signals_cache():
             print("✅ Cached signals updated.")
         except Exception as e:
             print(f"⚠️ Error updating signals: {e}")
-
         await asyncio.sleep(600)  # refresh every 10 minutes
 
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(update_signals_cache())
+    loop = asyncio.get_event_loop()
+    loop.create_task(update_signals_cache())
 
 
 # --- /signals endpoint ---
