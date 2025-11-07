@@ -77,22 +77,24 @@ async def update_signals_cache():
                 }
                 output = []
                 for ticker, name in pairs.items():
-                    df = yf.download(ticker, period="1d", interval="5m", progress=False)
-                    if df is None or df.empty:
-    print(f"⚠️ No data for {ticker}")
-    continue
-                    if df.empty:
-                        continue
-                    sig, conf = compute_signal(df)
-                    price = float(df["Close"].iloc[-1])
-                    output.append({
-                        "symbol": ticker,
-                        "name": name,
-                        "signal": sig,
-                        "confidence": conf,
-                        "price": round(price, 5 if "JPY" in ticker else 4),
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    })
+    df = yf.download(ticker, period="1d", interval="5m", progress=False)
+    
+    # Skip if no data returned
+    if df is None or df.empty:
+        print(f"⚠️ No data for {ticker}")
+        continue
+
+    sig, conf = compute_signal(df)
+    price = float(df["Close"].iloc[-1])
+    output.append({
+        "symbol": ticker,
+        "name": name,
+        "signal": sig,
+        "confidence": conf,
+        "price": round(price, 4),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+
 
                 _cache["signals"] = output
                 _cache["timestamp"] = datetime.now(timezone.utc)
