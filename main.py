@@ -77,7 +77,7 @@ async def update_signals_cache():
         except Exception as e:
             print(f"⚠️ Error updating signals: {e}")
 
-        await asyncio.sleep(600)  # refresh every 10 minutes
+        await asyncio.sleep(120)  # refresh every 2 minutes
 
 
 @app.on_event("startup")
