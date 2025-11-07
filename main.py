@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 import yfinance as yf
 import pandas as pd
@@ -7,36 +7,32 @@ import time, os
 
 app = FastAPI(title="Gold & Forex Signal Backend")
 
+# --- API Key configuration ---
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-# --- Manual CORS handler (works even if middleware fails) ---
-@app.middleware("http")
-async def add_cors_headers(request: Request, call_next):
-    response = await call_next(request)
-    origin = request.headers.get("origin")
-    if origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, x-api-key, api_key"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-    return response
+# --- CORS Configuration ---
+# Allows your Base44 preview, production, and your own domain
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://app.base44.com",
+        "https://base44.com",
+        "https://aurumiq.online",
+        "https://fxgold-signals.onrender.com",
+        # Allow any Base44 preview URLs dynamically (e.g., .modal.host)
+    ],
+    allow_origin_regex=r"https://.*\.modal\.host$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# --- Handle OPTIONS requests directly (CORS preflight) ---
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(rest_of_path: str = ""):
-    headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, api_key",
-        "Access-Control-Allow-Credentials": "true"
-    }
-    return JSONResponse(content={"ok": True}, headers=headers)
-
-# --- Cache to avoid Yahoo rate limit ---
+# --- In-memory cache to reduce Yahoo API calls ---
 _cache = {"signals": None, "timestamp": None}
 
 
 def compute_signal(df):
+    """Simple moving average strategy for signals."""
     df["SMA20"] = df["Close"].rolling(20).mean()
     df["SMA50"] = df["Close"].rolling(50).mean()
     last = df.iloc[-1]
@@ -51,6 +47,7 @@ def compute_signal(df):
 @app.get("/api/v1/signals")
 def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
+    print(f"DEBUG /signals – received header key: {key!r}")
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -59,7 +56,12 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
         if now - _cache["timestamp"] < timedelta(minutes=5):
             return _cache["signals"]
 
-    pairs = {"XAUUSD=X": "Gold", "EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD"}
+    pairs = {
+        "XAUUSD=X": "Gold",
+        "EURUSD=X": "EUR/USD",
+        "GBPUSD=X": "GBP/USD",
+    }
+
     output = []
     for ticker, name in pairs.items():
         df = yf.download(ticker, period="30d", interval="1h", progress=False)
@@ -73,7 +75,7 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
             "signal": sig,
             "confidence": conf,
             "price": round(price, 4),
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
     _cache["signals"] = output
@@ -84,6 +86,7 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
 @app.get("/api/v1/metrics")
 def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
+    print(f"DEBUG /metrics – received header key: {key!r}")
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -92,7 +95,7 @@ def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
         "sharpe_ratio": 1.88,
         "max_drawdown": 0.09,
         "avg_confidence": 0.67,
-        "last_update": datetime.now(timezone.utc).isoformat()
+        "last_update": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -102,5 +105,5 @@ def health():
     return {
         "status": "ok",
         "latency_ms": latency,
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
