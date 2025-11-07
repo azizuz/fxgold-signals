@@ -1,39 +1,66 @@
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from datetime import datetime, timezone, timedelta
 import yfinance as yf
 import pandas as pd
-import time, os
+import time, os, re
 
 app = FastAPI(title="Gold & Forex Signal Backend")
 
-# ✅ API Key setup
+# ✅ Your API Key (from Render secrets or fallback)
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-# ✅ ABSOLUTE CORS PERMISSION (works for Base44, modal.host, etc.)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # allow everything
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ✅ Trusted origins (we’ll manually allow them)
+ALLOWED_ORIGINS = [
+    "https://app.base44.com",
+    "https://base44.com",
+    "https://aurumiq.online",
+    "https://fxgold-signals.onrender.com",
+]
 
-# ✅ FORCE CORS HEADER ON EVERY RESPONSE
+# ✅ Add dynamic origin matching for modal.host previews
+def is_allowed_origin(origin: str):
+    if not origin:
+        return False
+    if origin in ALLOWED_ORIGINS:
+        return True
+    if re.search(r"\.modal\.host$", origin):  # Base44 preview
+        return True
+    return False
+
+
+# ✅ Manual CORS middleware that always sets headers
 @app.middleware("http")
-async def add_cors_headers(request: Request, call_next):
-    response = await call_next(request)
+async def cors_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
-    if origin:
+    response = await call_next(request)
+    if origin and is_allowed_origin(origin):
         response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+    else:
+        # Fallback — allow all during debugging
+        response.headers["Access-Control-Allow-Origin"] = "*"
+
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, x-api-key, api_key"
     response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "*"
     return response
 
 
-# --- CACHE ---
+# ✅ Handle preflight OPTIONS requests
+@app.options("/{path:path}")
+async def preflight_handler(request: Request):
+    origin = request.headers.get("origin")
+    headers = {
+        "Access-Control-Allow-Origin": origin if is_allowed_origin(origin) else "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, api_key",
+        "Access-Control-Allow-Credentials": "true",
+    }
+    return JSONResponse(content={"ok": True}, headers=headers)
+
+
+# --- Simple cache to avoid Yahoo Finance rate limits ---
 _cache = {"signals": None, "timestamp": None}
 
 def compute_signal(df):
@@ -51,7 +78,8 @@ def compute_signal(df):
 @app.get("/api/v1/signals")
 def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
-    print(f"DEBUG /signals – received header key: {key!r}")
+    print(f"DEBUG /signals – received key: {key!r}")
+
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -60,8 +88,9 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
         if now - _cache["timestamp"] < timedelta(minutes=5):
             return _cache["signals"]
 
-    pairs = {"XAUUSD=X": "Gold", "EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD"}
+    pairs = {"XAUUSD=X": "Gold", "EURUSD=X", "GBPUSD=X": "GBP/USD"}
     output = []
+
     for ticker, name in pairs.items():
         df = yf.download(ticker, period="30d", interval="1h", progress=False)
         if df.empty:
@@ -85,7 +114,8 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
 @app.get("/api/v1/metrics")
 def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
-    print(f"DEBUG /metrics – received header key: {key!r}")
+    print(f"DEBUG /metrics – received key: {key!r}")
+
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -100,9 +130,8 @@ def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
 
 @app.get("/api/v1/health")
 def health():
-    latency = round(time.time() % 1000, 2)
     return {
         "status": "ok",
-        "latency_ms": latency,
+        "latency_ms": round(time.time() % 1000, 2),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
