@@ -129,14 +129,71 @@ async def startup_event():
 def health():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
+import requests
+
 @app.get("/api/v1/signals")
 def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
-    if not _cache["signals"]:
-        return {"status": "initializing", "message": "Cache warming up"}
-    return _cache["signals"]
+
+    # --- Check cache validity (10 minutes) ---
+    now = datetime.now(timezone.utc)
+    if _cache["signals"] and _cache["timestamp"]:
+        age = (now - _cache["timestamp"]).total_seconds() / 60
+        if age < 10:
+            return _cache["signals"]
+
+    print("🔄 Refreshing signal data...")
+
+    pairs = {
+        "XAU/USD": "Gold",
+        "EUR/USD": "EUR/USD",
+        "GBP/USD": "GBP/USD"
+    }
+
+    output = []
+
+    for symbol, name in pairs.items():
+        try:
+            # Try Twelve Data API first
+            url = f"https://api.twelvedata.com/price?symbol={symbol.replace('/', '')}&apikey=6652074e3455433f950c9a8a04cf5e8c"
+            res = requests.get(url, timeout=10)
+            data = res.json()
+
+            if "price" in data:
+                price = float(data["price"])
+            else:
+                # fallback to Yahoo Finance
+                df = yf.download(symbol.replace('/', '') + "=X", period="1d", interval="5m", progress=False)
+                if df.empty:
+                    print(f"⚠️ No data for {symbol}")
+                    continue
+                price = float(df["Close"].iloc[-1])
+
+            # Compute simple signal based on small variation
+            df_temp = pd.DataFrame({"Close": [price * 0.999, price]})
+            sig, conf = compute_signal(df_temp)
+
+            output.append({
+                "symbol": symbol,
+                "name": name,
+                "signal": sig,
+                "confidence": conf,
+                "price": round(price, 4),
+                "timestamp": now.isoformat()
+            })
+            print(f"✅ {symbol}: {price}")
+
+        except Exception as e:
+            print(f"⚠️ Error fetching {symbol}: {e}")
+
+    _cache["signals"] = output
+    _cache["timestamp"] = now
+    print("✅ Cache updated successfully.")
+
+    return output
+
 
 @app.get("/api/v1/metrics")
 def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
