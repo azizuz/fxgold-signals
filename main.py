@@ -147,10 +147,12 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     print("🔄 Refreshing signal data...")
 
     pairs = {
-        "XAU/USD": "Gold",
-        "EUR/USD": "EUR/USD",
-        "GBP/USD": "GBP/USD"
-    }
+    "XAU/USD": "Gold",
+    "EUR/USD": "EUR/USD",
+    "GBP/USD": "GBP/USD",
+    "USD/JPY": "USD/JPY",
+    "BTC/USD": "Bitcoin"
+}
 
     output = []
 
