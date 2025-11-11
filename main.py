@@ -1,135 +1,8 @@
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timezone
-import requests, asyncio, os
-
-app = FastAPI(title="AurumIQ – Real-Time Gold & Forex Backend")
-
-# --- API Keys ---
-API_KEY = os.getenv("API_KEY", "fxgold123")
-RAPID_KEY = "1437f14449mshc600e6ae90b3617p12ea48jsn396165011147"
-
-# --- RapidAPI Hosts ---
-GOLD_HOST = "metals-prices-rates-api.p.rapidapi.com"
-FOREX_HOST = "forex-apised1.p.rapidapi.com"
-
-# --- CORS Middleware ---
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"https://(.*\.)?(aurumiq\.online|base44\.com|modal\.host)$",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- Cache Store ---
-_cache = {"signals": None, "timestamp": None}
-
-# --- Fetch Live Gold Price ---
-def get_gold_price():
-    url = f"https://{GOLD_HOST}/open-high-low-close/latest?base=USD&symbols=XAU"
-    headers = {
-        "x-rapidapi-key": RAPID_KEY,
-        "x-rapidapi-host": GOLD_HOST
-    }
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        res.raise_for_status()
-        data = res.json()
-        return float(data["data"]["XAU"]["close"])
-    except Exception as e:
-        print("⚠️ Gold price fetch error:", e)
-        return None
-
-# --- Fetch Live Forex Prices (fix inversions for USD pairs) ---
-def get_forex_rates():
-    url = f"https://{FOREX_HOST}/live-rates?base_currency_code=USD&currency_codes=GBP,EUR,JPY"
-    headers = {
-        "x-rapidapi-key": RAPID_KEY,
-        "x-rapidapi-host": FOREX_HOST
-    }
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        res.raise_for_status()
-        data = res.json()
-
-        # Convert base=USD rates to USD pairs
-        rates = data.get("rates", {})
-        eurusd = 1 / rates.get("EUR", 1.0)
-        gbpusd = 1 / rates.get("GBP", 1.0)
-        usdjpy = rates.get("JPY", 150.0)
-
-        return {
-            "EURUSD": round(eurusd, 5),
-            "GBPUSD": round(gbpusd, 5),
-            "USDJPY": round(usdjpy, 2)
-        }
-    except Exception as e:
-        print("⚠️ Forex fetch error:", e)
-        return None
-
-# --- Background Cache Update (every 2 minutes) ---
-async def update_cache():
-    while True:
-        try:
-            print("🔄 Updating live gold & forex data...")
-            gold_price = get_gold_price()
-            forex = get_forex_rates()
-
-            if gold_price and forex:
-                _cache["signals"] = [
-                    {
-                        "symbol": "XAUUSD",
-                        "name": "Gold",
-                        "price": round(gold_price, 3),
-                        "signal": "BUY" if gold_price > 2000 else "SELL",
-                        "confidence": 0.78,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    },
-                    {
-                        "symbol": "EURUSD",
-                        "name": "EUR/USD",
-                        "price": forex["EURUSD"],
-                        "signal": "BUY" if forex["EURUSD"] > 1.0 else "SELL",
-                        "confidence": 0.70,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    },
-                    {
-                        "symbol": "GBPUSD",
-                        "name": "GBP/USD",
-                        "price": forex["GBPUSD"],
-                        "signal": "BUY" if forex["GBPUSD"] > 1.0 else "SELL",
-                        "confidence": 0.72,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    },
-                    {
-                        "symbol": "USDJPY",
-                        "name": "USD/JPY",
-                        "price": forex["USDJPY"],
-                        "signal": "SELL" if forex["USDJPY"] > 140 else "BUY",
-                        "confidence": 0.68,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    }
-                ]
-                _cache["timestamp"] = datetime.now(timezone.utc)
-                print("✅ Cache updated successfully.")
-            else:
-                print("⚠️ Skipped cache update (missing data).")
-        except Exception as e:
-            print(f"⚠️ Error updating cache: {e}")
-
-        await asyncio.sleep(120)  # ⏱️ every 2 minutes
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(update_cache())
-
-# --- Endpoints ---
-@app.get("/api/v1/health")
-def health():
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
-
 import requests
+import pandas as pd
+import yfinance as yf
+from datetime import datetime, timezone, timedelta
+from fastapi import Header, HTTPException
 
 @app.get("/api/v1/signals")
 def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
@@ -137,78 +10,56 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    # --- Check cache validity (10 minutes) ---
     now = datetime.now(timezone.utc)
-    if _cache["signals"] and _cache["timestamp"]:
-        age = (now - _cache["timestamp"]).total_seconds() / 60
-        if age < 10:
-            return _cache["signals"]
-
-    print("🔄 Refreshing signal data...")
-
-    pairs = {
-    "XAU/USD": "Gold",
-    "EUR/USD": "EUR/USD",
-    "GBP/USD": "GBP/USD",
-    "USD/JPY": "USD/JPY",
-    "BTC/USD": "Bitcoin"
-}
-
     output = []
+    pairs = {
+        "XAU/USD": "Gold",
+        "EUR/USD": "EUR/USD",
+        "GBP/USD": "GBP/USD",
+        "USD/JPY": "USD/JPY",
+        "BTC/USD": "Bitcoin"
+    }
 
-for symbol, name in pairs.items():
-    try:
-        # Use Twelve Data API key from environment
-        api_key_td = os.getenv("TWELVEDATA_API_KEY", "")
-        url = f"https://api.twelvedata.com/price?symbol={symbol.replace('/', '')}&apikey={api_key_td}"
+    for symbol, name in pairs.items():
+        try:
+            # --- Fetch from Twelve Data ---
+            api_key_td = os.getenv("TWELVEDATA_API_KEY", "")
+            url = f"https://api.twelvedata.com/price?symbol={symbol.replace('/', '')}&apikey={api_key_td}"
+            res = requests.get(url, timeout=10)
+            data = res.json()
+            print(f"🔍 {symbol} API response:", data)
 
-        res = requests.get(url, timeout=10)
-        data = res.json()
-        print(f"🔍 {symbol} API response:", data)
+            # --- Parse price ---
+            if "price" in data:
+                price = float(data["price"])
+            else:
+                # fallback: Yahoo Finance
+                df = yf.download(symbol.replace('/', '') + "=X", period="1d", interval="5m", progress=False)
+                if df.empty:
+                    print(f"⚠️ No data for {symbol}")
+                    continue
+                price = float(df["Close"].iloc[-1])
 
-        if "price" in data:
-            price = float(data["price"])
-        else:
-            # fallback to Yahoo Finance
-            df = yf.download(symbol.replace('/', '') + "=X", period="1d", interval="5m", progress=False)
-            if df.empty:
-                print(f"⚠️ No data for {symbol}")
-                continue
-            price = float(df["Close"].iloc[-1])
+            # --- Compute a simple trend signal ---
+            df_temp = pd.DataFrame({"Close": [price * 0.999, price]})
+            sig, conf = compute_signal(df_temp)
 
-        # Compute simple signal
-        df_temp = pd.DataFrame({"Close": [price * 0.999, price]})
-        sig, conf = compute_signal(df_temp)
+            output.append({
+                "symbol": symbol,
+                "name": name,
+                "signal": sig,
+                "confidence": conf,
+                "price": round(price, 4),
+                "timestamp": now.isoformat()
+            })
+            print(f"✅ {symbol}: {price}")
 
-        output.append({
-            "symbol": symbol,
-            "name": name,
-            "signal": sig,
-            "confidence": conf,
-            "price": round(price, 4),
-            "timestamp": now.isoformat()
-        })
-        print(f"✅ {symbol}: {price}")
+        except Exception as e:
+            print(f"⚠️ Error fetching {symbol}: {e}")
 
-    except Exception as e:
-        print(f"⚠️ Error fetching {symbol}: {e}")
+    if not output:
+        return {"status": "initializing", "message": "Cache warming up"}
 
     _cache["signals"] = output
     _cache["timestamp"] = now
-    print("✅ Cache updated successfully.")
-
     return output
-
-
-@app.get("/api/v1/metrics")
-def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
-    key = (x_api_key or api_key or "").strip()
-    if key != API_KEY:
-        raise HTTPException(status_code=403, detail="Unauthorized")
-    return {
-        "win_rate": 0.76,
-        "sharpe_ratio": 1.91,
-        "max_drawdown": 0.08,
-        "avg_confidence": 0.72,
-        "last_update": datetime.now(timezone.utc).isoformat()
-    }
