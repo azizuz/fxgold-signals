@@ -1,16 +1,19 @@
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timezone
-import os, requests, pandas as pd, yfinance as yf, asyncio, time
+from datetime import datetime, timezone, timedelta
+import yfinance as yf
+import pandas as pd
+import time, os, asyncio, requests
 
-# --- Initialize app ---
+# --- Initialize FastAPI ---
 app = FastAPI(title="Gold & Forex Signal Backend")
 
 # --- Security key ---
 API_KEY = os.getenv("API_KEY", "fxgold123")
 
-# --- Twelve Data API key ---
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "6652074e3455433f950c9a8a04cf5e8c")
+# --- API keys for data sources ---
+TWELVE_API_KEY = os.getenv("TWELVE_API_KEY", "6652074e3455433f950c9a8a04cf5e8c")
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "d495bl1r01qshn3ko36gd495bl1r01qshn3ko370")
 
 # --- CORS setup ---
 app.add_middleware(
@@ -22,84 +25,105 @@ app.add_middleware(
 )
 
 # --- Cache store ---
-_cache = {"signals": None, "timestamp": None, "avg_latency": None}
+_cache = {"signals": None, "timestamp": None}
 
-# --- Compute simple signal ---
+# --- Signal computation ---
 def compute_signal(df):
-    df["SMA20"] = df["Close"].rolling(2).mean()
-    df["SMA50"] = df["Close"].rolling(2).mean()
+    df["SMA20"] = df["Close"].rolling(20).mean()
+    df["SMA50"] = df["Close"].rolling(50).mean()
     last = df.iloc[-1]
-    if last["SMA20"] > last["SMA50"]:
+    sma20 = float(last["SMA20"])
+    sma50 = float(last["SMA50"])
+    if sma20 > sma50:
         return "BUY", 0.75
-    elif last["SMA20"] < last["SMA50"]:
+    elif sma20 < sma50:
         return "SELL", 0.70
     else:
         return "HOLD", 0.60
 
+# --- Fetch live price from APIs ---
+def fetch_price(symbol):
+    # ✅ Try Twelve Data first
+    try:
+        url = f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_API_KEY}"
+        res = requests.get(url, timeout=5)
+        data = res.json()
+        if "price" in data:
+            print(f"✅ Twelve Data success for {symbol}: {data['price']}")
+            return float(data["price"])
+    except Exception as e:
+        print(f"⚠️ Twelve Data error for {symbol}: {e}")
 
-# --- Core signal fetch function (used by both endpoint and background task) ---
-def fetch_signals():
-    now = datetime.now(timezone.utc)
-    output = []
-    pairs = {
-        "XAU/USD": "Gold",
-        "EUR/USD": "EUR/USD",
-        "GBP/USD": "GBP/USD",
-        "USD/JPY": "USD/JPY",
-        "BTC/USD": "Bitcoin",
-    }
+    # ✅ Finnhub fallback
+    try:
+        url = f"https://finnhub.io/api/v1/quote?symbol={symbol}"
+        headers = {"X-Finnhub-Token": FINNHUB_API_KEY}
+        res = requests.get(url, headers=headers, timeout=5)
+        data = res.json()
+        if "c" in data and data["c"] > 0:
+            print(f"✅ Finnhub success for {symbol}: {data['c']}")
+            return float(data["c"])
+    except Exception as e:
+        print(f"⚠️ Finnhub error for {symbol}: {e}")
 
-    latencies = []  # collect request durations
+    # ✅ Yahoo fallback
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="1d", interval="1h")
+        if not df.empty:
+            price = float(df["Close"].iloc[-1])
+            print(f"✅ Yahoo fallback for {symbol}: {price}")
+            return price
+    except Exception as e:
+        print(f"⚠️ Yahoo error for {symbol}: {e}")
 
-    for symbol, name in pairs.items():
+    print(f"❌ All data sources failed for {symbol}")
+    return None
+
+# --- Background task to update signals every 2 minutes ---
+async def update_signals_cache():
+    while True:
         try:
-            start_time = time.time()
-
-            # --- Try Twelve Data ---
-            url = f"https://api.twelvedata.com/price?symbol={symbol.replace('/', '')}&apikey={TWELVEDATA_API_KEY}"
-            res = requests.get(url, timeout=10)
-            latency = time.time() - start_time
-            latencies.append(latency)
-
-            data = res.json()
-            print(f"🔍 {symbol} API response ({latency:.2f}s):", data)
-
-            if "price" in data:
-                price = float(data["price"])
-            else:
-                # --- Fallback to Yahoo Finance ---
-                df = yf.download(symbol.replace('/', '') + "=X", period="1d", interval="5m", progress=False)
-                if df.empty:
-                    print(f"⚠️ No data for {symbol}")
+            print("🔄 Updating signals cache...")
+            pairs = {
+                "EUR/USD": "EUR/USD",
+                "GBP/USD": "GBP/USD",
+                "USD/JPY": "USD/JPY",
+                "XAU/USD": "Gold",
+            }
+            output = []
+            for symbol, name in pairs.items():
+                price = fetch_price(symbol)
+                if price is None:
                     continue
-                price = float(df["Close"].iloc[-1])
-
-            df_temp = pd.DataFrame({"Close": [price * 0.999, price]})
-            sig, conf = compute_signal(df_temp)
-
-            output.append({
-                "symbol": symbol,
-                "name": name,
-                "signal": sig,
-                "confidence": conf,
-                "price": round(price, 4),
-                "timestamp": now.isoformat()
-            })
-            print(f"✅ {symbol}: {price}")
-
+                # Build fake DF for SMA simulation
+                df = pd.DataFrame({"Close": [price] * 60})
+                sig, conf = compute_signal(df)
+                output.append({
+                    "symbol": symbol,
+                    "name": name,
+                    "signal": sig,
+                    "confidence": conf,
+                    "price": round(price, 5),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+            _cache["signals"] = output
+            _cache["timestamp"] = datetime.now(timezone.utc)
+            print(f"✅ Signals cache updated at {_cache['timestamp']}")
         except Exception as e:
-            print(f"⚠️ Error fetching {symbol}: {e}")
+            print(f"⚠️ Cache update failed: {e}")
+        await asyncio.sleep(120)  # every 2 minutes
 
-    avg_latency = round(sum(latencies) / len(latencies), 3) if latencies else None
-    _cache["signals"] = output
-    _cache["timestamp"] = now
-    _cache["avg_latency"] = avg_latency
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(update_signals_cache())
 
-    print(f"⏱️ Average API latency: {avg_latency}s")
-    return output
+# --- API Endpoints ---
 
+@app.get("/api/v1/health")
+def health():
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
-# --- /signals endpoint ---
 @app.get("/api/v1/signals")
 def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
@@ -107,30 +131,11 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     if not _cache["signals"]:
-        print("🕐 Cache empty, fetching new signals...")
-        return fetch_signals()
-
+        print("⚠️ Cache empty – forcing immediate refresh")
+        asyncio.create_task(update_signals_cache())
+        return {"status": "initializing", "message": "Cache warming up"}
     return _cache["signals"]
 
-
-# --- Background updater (every 2 minutes) ---
-async def update_signals_cache():
-    while True:
-        print("🔄 Background refresh: updating signals...")
-        try:
-            fetch_signals()
-            print("✅ Cache refreshed successfully.")
-        except Exception as e:
-            print(f"⚠️ Background refresh failed: {e}")
-        await asyncio.sleep(120)  # refresh every 2 minutes
-
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(update_signals_cache())
-
-
-# --- /metrics endpoint ---
 @app.get("/api/v1/metrics")
 def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
@@ -142,15 +147,5 @@ def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
         "sharpe_ratio": 1.91,
         "max_drawdown": 0.08,
         "avg_confidence": 0.72,
-        "avg_latency": _cache["avg_latency"],
-        "last_update": datetime.now(timezone.utc).isoformat()
-    }
-
-
-# --- /health endpoint ---
-@app.get("/api/v1/health")
-def health():
-    return {
-        "status": "ok",
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "last_update": datetime.now(timezone.utc).isoformat(),
     }
