@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
-import os, requests, pandas as pd, yfinance as yf, asyncio
+import os, requests, pandas as pd, yfinance as yf, asyncio, time
 
 # --- Initialize app ---
 app = FastAPI(title="Gold & Forex Signal Backend")
@@ -22,7 +22,7 @@ app.add_middleware(
 )
 
 # --- Cache store ---
-_cache = {"signals": None, "timestamp": None}
+_cache = {"signals": None, "timestamp": None, "avg_latency": None}
 
 # --- Compute simple signal ---
 def compute_signal(df):
@@ -49,13 +49,20 @@ def fetch_signals():
         "BTC/USD": "Bitcoin",
     }
 
+    latencies = []  # collect request durations
+
     for symbol, name in pairs.items():
         try:
+            start_time = time.time()
+
             # --- Try Twelve Data ---
             url = f"https://api.twelvedata.com/price?symbol={symbol.replace('/', '')}&apikey={TWELVEDATA_API_KEY}"
             res = requests.get(url, timeout=10)
+            latency = time.time() - start_time
+            latencies.append(latency)
+
             data = res.json()
-            print(f"🔍 {symbol} API response:", data)
+            print(f"🔍 {symbol} API response ({latency:.2f}s):", data)
 
             if "price" in data:
                 price = float(data["price"])
@@ -83,8 +90,12 @@ def fetch_signals():
         except Exception as e:
             print(f"⚠️ Error fetching {symbol}: {e}")
 
+    avg_latency = round(sum(latencies) / len(latencies), 3) if latencies else None
     _cache["signals"] = output
     _cache["timestamp"] = now
+    _cache["avg_latency"] = avg_latency
+
+    print(f"⏱️ Average API latency: {avg_latency}s")
     return output
 
 
@@ -95,7 +106,6 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    # If cache empty, trigger an update
     if not _cache["signals"]:
         print("🕐 Cache empty, fetching new signals...")
         return fetch_signals()
@@ -132,6 +142,7 @@ def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
         "sharpe_ratio": 1.91,
         "max_drawdown": 0.08,
         "avg_confidence": 0.72,
+        "avg_latency": _cache["avg_latency"],
         "last_update": datetime.now(timezone.utc).isoformat()
     }
 
