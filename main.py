@@ -156,39 +156,42 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
 
     output = []
 
-    for symbol, name in pairs.items():
-        try:
-            # Try Twelve Data API first
-            url = f"https://api.twelvedata.com/price?symbol={symbol.replace('/', '')}&apikey=6652074e3455433f950c9a8a04cf5e8c"
-            res = requests.get(url, timeout=10)
-            data = res.json()
+for symbol, name in pairs.items():
+    try:
+        # Use Twelve Data API key from environment
+        api_key_td = os.getenv("TWELVEDATA_API_KEY", "")
+        url = f"https://api.twelvedata.com/price?symbol={symbol.replace('/', '')}&apikey={api_key_td}"
 
-            if "price" in data:
-                price = float(data["price"])
-            else:
-                # fallback to Yahoo Finance
-                df = yf.download(symbol.replace('/', '') + "=X", period="1d", interval="5m", progress=False)
-                if df.empty:
-                    print(f"⚠️ No data for {symbol}")
-                    continue
-                price = float(df["Close"].iloc[-1])
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        print(f"🔍 {symbol} API response:", data)
 
-            # Compute simple signal based on small variation
-            df_temp = pd.DataFrame({"Close": [price * 0.999, price]})
-            sig, conf = compute_signal(df_temp)
+        if "price" in data:
+            price = float(data["price"])
+        else:
+            # fallback to Yahoo Finance
+            df = yf.download(symbol.replace('/', '') + "=X", period="1d", interval="5m", progress=False)
+            if df.empty:
+                print(f"⚠️ No data for {symbol}")
+                continue
+            price = float(df["Close"].iloc[-1])
 
-            output.append({
-                "symbol": symbol,
-                "name": name,
-                "signal": sig,
-                "confidence": conf,
-                "price": round(price, 4),
-                "timestamp": now.isoformat()
-            })
-            print(f"✅ {symbol}: {price}")
+        # Compute simple signal
+        df_temp = pd.DataFrame({"Close": [price * 0.999, price]})
+        sig, conf = compute_signal(df_temp)
 
-        except Exception as e:
-            print(f"⚠️ Error fetching {symbol}: {e}")
+        output.append({
+            "symbol": symbol,
+            "name": name,
+            "signal": sig,
+            "confidence": conf,
+            "price": round(price, 4),
+            "timestamp": now.isoformat()
+        })
+        print(f"✅ {symbol}: {price}")
+
+    except Exception as e:
+        print(f"⚠️ Error fetching {symbol}: {e}")
 
     _cache["signals"] = output
     _cache["timestamp"] = now
