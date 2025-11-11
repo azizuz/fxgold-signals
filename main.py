@@ -1,9 +1,9 @@
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
-import os, requests, pandas as pd, yfinance as yf
+import os, requests, pandas as pd, yfinance as yf, asyncio
 
-# --- Initialize app BEFORE endpoints ---
+# --- Initialize app ---
 app = FastAPI(title="Gold & Forex Signal Backend")
 
 # --- Security key ---
@@ -24,7 +24,7 @@ app.add_middleware(
 # --- Cache store ---
 _cache = {"signals": None, "timestamp": None}
 
-# --- Compute a simple signal ---
+# --- Compute simple signal ---
 def compute_signal(df):
     df["SMA20"] = df["Close"].rolling(2).mean()
     df["SMA50"] = df["Close"].rolling(2).mean()
@@ -37,13 +37,8 @@ def compute_signal(df):
         return "HOLD", 0.60
 
 
-# --- /signals endpoint ---
-@app.get("/api/v1/signals")
-def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
-    key = (x_api_key or api_key or "").strip()
-    if key != API_KEY:
-        raise HTTPException(status_code=403, detail="Unauthorized")
-
+# --- Core signal fetch function (used by both endpoint and background task) ---
+def fetch_signals():
     now = datetime.now(timezone.utc)
     output = []
     pairs = {
@@ -56,7 +51,7 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
 
     for symbol, name in pairs.items():
         try:
-            # --- Try Twelve Data first ---
+            # --- Try Twelve Data ---
             url = f"https://api.twelvedata.com/price?symbol={symbol.replace('/', '')}&apikey={TWELVEDATA_API_KEY}"
             res = requests.get(url, timeout=10)
             data = res.json()
@@ -88,12 +83,41 @@ def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
         except Exception as e:
             print(f"⚠️ Error fetching {symbol}: {e}")
 
-    if not output:
-        return {"status": "initializing", "message": "Cache warming up"}
-
     _cache["signals"] = output
     _cache["timestamp"] = now
     return output
+
+
+# --- /signals endpoint ---
+@app.get("/api/v1/signals")
+def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
+    key = (x_api_key or api_key or "").strip()
+    if key != API_KEY:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    # If cache empty, trigger an update
+    if not _cache["signals"]:
+        print("🕐 Cache empty, fetching new signals...")
+        return fetch_signals()
+
+    return _cache["signals"]
+
+
+# --- Background updater (every 2 minutes) ---
+async def update_signals_cache():
+    while True:
+        print("🔄 Background refresh: updating signals...")
+        try:
+            fetch_signals()
+            print("✅ Cache refreshed successfully.")
+        except Exception as e:
+            print(f"⚠️ Background refresh failed: {e}")
+        await asyncio.sleep(120)  # refresh every 2 minutes
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(update_signals_cache())
 
 
 # --- /metrics endpoint ---
