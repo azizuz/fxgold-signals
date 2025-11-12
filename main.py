@@ -219,66 +219,90 @@ import threading, time
 
 import threading, time, random, requests
 
+import threading, time, random, requests
+
 def background_learning_updater():
     """
-    Simulated AI learning engine that evolves in response to backend performance.
-    Fetches /metrics periodically, adjusts learning confidence and win rate accordingly,
-    and pushes updates into the cache so Base44 sees realistic, linked trends.
+    Feedback-driven adaptive learning simulation.
+    The AI 'learns faster' when backend performance improves rapidly,
+    and slows down or stabilizes when progress flattens or declines.
     """
 
-    # Initialize starting parameters
+    # Initialize learning cache
     _cache.setdefault("latest_confidence", 0.65)
     _cache.setdefault("latest_win_rate", 0.70)
     _cache.setdefault("iterations_today", 0)
     _cache.setdefault("learning_timestamps", [])
     _cache.setdefault("learning_confidences", [])
     _cache.setdefault("learning_win_rates", [])
+    _cache.setdefault("previous_backend_win", 0.76)
+    _cache.setdefault("previous_backend_conf", 0.72)
 
     METRICS_URL = "https://fxgold-signals.onrender.com/api/v1/metrics"
     HEADERS = {"x-api-key": API_KEY}
 
     while True:
         try:
-            # ✅ Fetch live backend metrics
+            # Fetch backend metrics
             res = requests.get(METRICS_URL, headers=HEADERS, timeout=10)
             data = res.json()
 
             backend_win = data.get("win_rate", 0.75)
             backend_conf = data.get("avg_confidence", 0.7)
 
-            # ✅ Adjust learning AI based on backend trends
-            drift = random.uniform(-0.003, 0.012)
-            conf = _cache["latest_confidence"] + 0.5 * (backend_conf - _cache["latest_confidence"]) + drift
-            winr = _cache["latest_win_rate"] + 0.5 * (backend_win - _cache["latest_win_rate"]) + random.uniform(-0.002, 0.008)
+            # Detect rate of change (delta)
+            delta_win = backend_win - _cache["previous_backend_win"]
+            delta_conf = backend_conf - _cache["previous_backend_conf"]
 
-            # ✅ Clip within realistic limits
+            # Adjust learning rate adaptively
+            learning_speed = 1.0
+            if delta_win > 0.01 or delta_conf > 0.01:
+                learning_speed = 1.8  # performance surge → faster learning
+            elif delta_win < -0.01 or delta_conf < -0.01:
+                learning_speed = 0.6  # performance drop → slower learning
+            elif abs(delta_win) < 0.005 and abs(delta_conf) < 0.005:
+                learning_speed = 0.9  # stable → minor learning drift
+
+            # Save for next iteration
+            _cache["previous_backend_win"] = backend_win
+            _cache["previous_backend_conf"] = backend_conf
+
+            # Adjust AI confidence/win_rate toward backend
+            drift_conf = random.uniform(-0.002, 0.008) * learning_speed
+            drift_winr = random.uniform(-0.002, 0.006) * learning_speed
+
+            conf = _cache["latest_confidence"] + 0.5 * (backend_conf - _cache["latest_confidence"]) + drift_conf
+            winr = _cache["latest_win_rate"] + 0.5 * (backend_win - _cache["latest_win_rate"]) + drift_winr
+
+            # Clip values within logical limits
             conf = max(0.5, min(conf, 0.95))
             winr = max(0.55, min(winr, 0.9))
 
-            # ✅ Update AI state
+            # Update cache
             _cache["latest_confidence"] = round(conf, 3)
             _cache["latest_win_rate"] = round(winr, 3)
             _cache["last_learning_update"] = datetime.now(timezone.utc)
             _cache["learning_active"] = True
             _cache["iterations_today"] += 1
 
-            # ✅ Maintain history for the chart
+            # Track trend data for Base44
             _cache["learning_timestamps"].append(datetime.now(timezone.utc).isoformat())
             _cache["learning_confidences"].append(_cache["latest_confidence"])
             _cache["learning_win_rates"].append(_cache["latest_win_rate"])
 
-            # Keep last 50 entries for smooth charts
+            # Keep the latest 50 samples
             for k in ["learning_timestamps", "learning_confidences", "learning_win_rates"]:
                 _cache[k] = _cache[k][-50:]
 
-            print(f"🤖 Learning synced with backend: conf={_cache['latest_confidence']} winr={_cache['latest_win_rate']}")
+            print(f"🧠 [Feedback AI] conf={_cache['latest_confidence']} winr={_cache['latest_win_rate']} speed={round(learning_speed, 2)}x")
 
         except Exception as e:
             print(f"⚠️ Learning updater error: {e}")
             _cache["learning_active"] = False
 
-        # Run every 2 minutes
+        # Every 2 minutes
         time.sleep(120)
 
-# 🔁 Start adaptive learning thread
+
+# Start adaptive learning thread
 threading.Thread(target=background_learning_updater, daemon=True).start()
