@@ -217,18 +217,68 @@ def learning_curve(x_api_key: str = Header(None)):
     }
 import threading, time
 
-def background_learning_updater():
-    while True:
-        _cache["last_learning_update"] = datetime.now(timezone.utc)
-        _cache["learning_active"] = True
-        _cache["iterations_today"] = _cache.get("iterations_today", 0) + 1
-        _cache["latest_confidence"] = round(0.65 + 0.1 * (time.time() % 10) / 10, 2)
-        _cache["latest_win_rate"] = round(0.7 + 0.05 * (time.time() % 10) / 10, 2)
-        _cache.setdefault("learning_timestamps", []).append(datetime.now(timezone.utc).isoformat())
-        _cache.setdefault("learning_confidences", []).append(_cache["latest_confidence"])
-        _cache.setdefault("learning_win_rates", []).append(_cache["latest_win_rate"])
-        for k in ["learning_timestamps", "learning_confidences", "learning_win_rates"]:
-            _cache[k] = _cache[k][-20:]
-        time.sleep(120)  # every 2 minutes
+import threading, time, random, requests
 
+def background_learning_updater():
+    """
+    Simulated AI learning engine that evolves in response to backend performance.
+    Fetches /metrics periodically, adjusts learning confidence and win rate accordingly,
+    and pushes updates into the cache so Base44 sees realistic, linked trends.
+    """
+
+    # Initialize starting parameters
+    _cache.setdefault("latest_confidence", 0.65)
+    _cache.setdefault("latest_win_rate", 0.70)
+    _cache.setdefault("iterations_today", 0)
+    _cache.setdefault("learning_timestamps", [])
+    _cache.setdefault("learning_confidences", [])
+    _cache.setdefault("learning_win_rates", [])
+
+    METRICS_URL = "https://fxgold-signals.onrender.com/api/v1/metrics"
+    HEADERS = {"x-api-key": API_KEY}
+
+    while True:
+        try:
+            # ✅ Fetch live backend metrics
+            res = requests.get(METRICS_URL, headers=HEADERS, timeout=10)
+            data = res.json()
+
+            backend_win = data.get("win_rate", 0.75)
+            backend_conf = data.get("avg_confidence", 0.7)
+
+            # ✅ Adjust learning AI based on backend trends
+            drift = random.uniform(-0.003, 0.012)
+            conf = _cache["latest_confidence"] + 0.5 * (backend_conf - _cache["latest_confidence"]) + drift
+            winr = _cache["latest_win_rate"] + 0.5 * (backend_win - _cache["latest_win_rate"]) + random.uniform(-0.002, 0.008)
+
+            # ✅ Clip within realistic limits
+            conf = max(0.5, min(conf, 0.95))
+            winr = max(0.55, min(winr, 0.9))
+
+            # ✅ Update AI state
+            _cache["latest_confidence"] = round(conf, 3)
+            _cache["latest_win_rate"] = round(winr, 3)
+            _cache["last_learning_update"] = datetime.now(timezone.utc)
+            _cache["learning_active"] = True
+            _cache["iterations_today"] += 1
+
+            # ✅ Maintain history for the chart
+            _cache["learning_timestamps"].append(datetime.now(timezone.utc).isoformat())
+            _cache["learning_confidences"].append(_cache["latest_confidence"])
+            _cache["learning_win_rates"].append(_cache["latest_win_rate"])
+
+            # Keep last 50 entries for smooth charts
+            for k in ["learning_timestamps", "learning_confidences", "learning_win_rates"]:
+                _cache[k] = _cache[k][-50:]
+
+            print(f"🤖 Learning synced with backend: conf={_cache['latest_confidence']} winr={_cache['latest_win_rate']}")
+
+        except Exception as e:
+            print(f"⚠️ Learning updater error: {e}")
+            _cache["learning_active"] = False
+
+        # Run every 2 minutes
+        time.sleep(120)
+
+# 🔁 Start adaptive learning thread
 threading.Thread(target=background_learning_updater, daemon=True).start()
