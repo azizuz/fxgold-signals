@@ -125,8 +125,20 @@ async def update_signals_cache():
         except Exception as e:
             print(f"⚠️ Cache update error: {e}")
 
-        await asyncio.sleep(120)  # every 2 minutes
+        import json  # ← make sure this is already at the top of your file
 
+try:
+    with open("entities/TimeframeSetting.json") as f:
+        settings = json.load(f)
+    interval = settings.get("active_interval", "2m")
+    sleep_seconds = {
+        "2m": 120, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400
+    }.get(interval, 120)
+except Exception as e:
+    print(f"⚠️ Could not read timeframe settings, defaulting to 2m: {e}")
+    sleep_seconds = 120
+
+await asyncio.sleep(sleep_seconds)
 
 @app.on_event("startup")
 async def startup_event():
