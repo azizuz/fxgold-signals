@@ -86,11 +86,29 @@ def fetch_price(symbol: str):
     return None, "None"
 
 
-# --- Background task: refresh cache every 2 minutes ---
+# --- Background task: refresh cache dynamically based on timeframe ---
+import json  # keep this near the top of your file, but also fine here
+
 async def update_signals_cache():
     while True:
         try:
-            print("🔄 Refreshing signals cache...")
+            # --- Step 1: read timeframe settings dynamically ---
+            try:
+                with open("entities/TimeframeSetting.json") as f:
+                    settings = json.load(f)
+                interval = settings.get("active_interval", "2m")
+                sleep_seconds = {
+                    "2m": 120, "5m": 300, "15m": 900,
+                    "1h": 3600, "4h": 14400, "1d": 86400
+                }.get(interval, 120)
+            except Exception as e:
+                print(f"⚠️ Could not read timeframe settings, defaulting to 2m: {e}")
+                interval = "2m"
+                sleep_seconds = 120
+
+            print(f"🔄 Refreshing signals cache... (interval: {interval})")
+
+            # --- Step 2: build pairs and fetch prices ---
             pairs = {
                 "EUR/USD": "EUR/USD",
                 "GBP/USD": "GBP/USD",
@@ -105,7 +123,7 @@ async def update_signals_cache():
                     print(f"❌ Skipping {symbol} — no valid data.")
                     continue
 
-                # Create mock DataFrame for SMA logic
+                # --- Step 3: compute signals ---
                 df = pd.DataFrame({"Close": [price] * 60})
                 sig, conf = compute_signal(df)
 
@@ -119,26 +137,16 @@ async def update_signals_cache():
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
 
+            # --- Step 4: cache update ---
             _cache["signals"] = output
             _cache["timestamp"] = datetime.now(timezone.utc)
             print(f"✅ Cache updated successfully at {_cache['timestamp']}")
+
         except Exception as e:
             print(f"⚠️ Cache update error: {e}")
 
-        import json  # ← make sure this is already at the top of your file
-
-try:
-    with open("entities/TimeframeSetting.json") as f:
-        settings = json.load(f)
-    interval = settings.get("active_interval", "2m")
-    sleep_seconds = {
-        "2m": 120, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400
-    }.get(interval, 120)
-except Exception as e:
-    print(f"⚠️ Could not read timeframe settings, defaulting to 2m: {e}")
-    sleep_seconds = 120
-
-await asyncio.sleep(sleep_seconds)
+        # --- Step 5: wait until next update ---
+        await asyncio.sleep(sleep_seconds)
 
 @app.on_event("startup")
 async def startup_event():
