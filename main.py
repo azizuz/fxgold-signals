@@ -159,20 +159,22 @@ async def startup_event():
 def health():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
-
 @app.get("/api/v1/signals")
-def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
+async def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
     if key != API_KEY:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    if not _cache["signals"]:
-        print("⚠️ Cache empty — triggering immediate refresh")
-        asyncio.create_task(update_signals_cache())
-        return {"status": "initializing", "message": "Cache warming up"}
+    # If cache empty, respond gracefully
+    if not _cache.get("signals"):
+        print("⚠️ Cache empty — triggering initial refresh...")
+        try:
+            asyncio.create_task(update_signals_cache())
+        except RuntimeError as e:
+            print(f"⚠️ Could not start update task: {e}")
+        return {"status": "initializing", "message": "Cache warming up — please retry in ~2 minutes."}
 
     return _cache["signals"]
-
 
 @app.get("/api/v1/metrics")
 def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
@@ -187,6 +189,19 @@ def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
         "avg_confidence": 0.72,
         "last_update": datetime.now(timezone.utc).isoformat(),
     }
+    
+    @app.get("/api/v1/debug_cache")
+def debug_cache(x_api_key: str = Header(None)):
+    key = (x_api_key or "").strip()
+    if key != API_KEY:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    return {
+        "timestamp": str(_cache.get("timestamp")),
+        "signals_ready": bool(_cache.get("signals")),
+        "signals_count": len(_cache.get("signals") or []),
+    }
+
 # --- AI Learning System Endpoints ---
 
 @app.get("/api/v1/learning_status")
