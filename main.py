@@ -176,7 +176,7 @@ async def get_signals(x_api_key: str = Header(None), api_key: str = Header(None)
 
     return _cache["signals"]
 
-@app.get("/api/v1/metrics")
+    @app.get("/api/v1/metrics")
 def get_metrics(x_api_key: str = Header(None), api_key: str = Header(None)):
     key = (x_api_key or api_key or "").strip()
     if key != API_KEY:
