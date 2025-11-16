@@ -352,6 +352,31 @@ def background_learning_updater():
         # Every 2 minutes
         time.sleep(120)
 
+# --- Simulated Trade Execution Endpoint ---
+@app.post("/api/v1/simulate_trade")
+def simulate_trade(x_api_key: str = Header(None)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Get the latest signals from cache
+    if not _cache.get("signals"):
+        raise HTTPException(status_code=503, detail="Signals not ready yet. Try again soon.")
+
+    # Pick the top signal by confidence
+    strongest = max(_cache["signals"], key=lambda s: s["confidence"])
+    trade_id = f"SIM_{int(time.time())}"
+    result = {
+        "trade_id": trade_id,
+        "symbol": strongest["symbol"],
+        "signal": strongest["signal"],
+        "confidence": strongest["confidence"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "mode": "simulation",
+        "status": "executed",
+    }
+
+    print(f"🧪 Simulated trade executed: {result}")
+    return result
 
 # Start adaptive learning thread
 threading.Thread(target=background_learning_updater, daemon=True).start()
