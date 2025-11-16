@@ -147,6 +147,19 @@ async def update_signals_cache():
 
         # --- Step 5: wait until next update ---
         await asyncio.sleep(sleep_seconds)
+from fastapi import Header, HTTPException
+
+@app.get("/api/v1/trading_mode")
+def get_trading_mode(x_api_key: str = Header(None)):
+    if x_api_key != "fxgold123":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        import json
+        with open("entities/TradingMode.json") as f:
+            mode = json.load(f)
+        return mode
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading mode: {e}")
 
 @app.on_event("startup")
 async def startup_event():
